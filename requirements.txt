@@ -1,0 +1,7 @@
+flask==3.0.2
+flask-cors==4.0.0
+requests==2.31.0
+pandas==2.2.1
+ta==0.11.0
+python-dotenv==1.0.1
+gunicorn==21.2.0
