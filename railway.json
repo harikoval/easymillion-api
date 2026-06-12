@@ -5,7 +5,7 @@
   },
   "deploy": {
     "startCommand": "gunicorn signal_api:app --bind 0.0.0.0:$PORT --workers 2 --timeout 30",
-    "healthcheckPath": "/signal?pair=EUR/USD",
+    "healthcheckPath": "/",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3

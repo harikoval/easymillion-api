@@ -108,6 +108,11 @@ def calculate_signal(df: pd.DataFrame):
     return direction, accuracy
 
 
+@app.route("/")
+def health():
+    return jsonify({"status": "ok"}), 200
+
+
 @app.route("/signal")
 def get_signal():
     pair = request.args.get("pair", "EUR/USD")
