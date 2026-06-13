@@ -895,7 +895,7 @@
         if (data.market_closed) apiData = { market_closed: true };
         else if (data.error) apiData = { error: data.error };
         else apiData = data;
-        if (animationDone) resolveApiData();
+        if (animationDone) resolveApiData(apiData);
       })
       .catch(err => {
         clearTimeout(timeoutId);
@@ -904,7 +904,7 @@
         } else {
           apiData = { error: 'Signal server unavailable. Make sure signal_api.py is running.' };
         }
-        if (animationDone) resolveApiData();
+        if (animationDone) resolveApiData(apiData);
       });
 
     textEl.style.transition = 'none';
@@ -926,17 +926,17 @@
       } else {
         setTimeout(() => {
           animationDone = true;
-          if (apiData !== null) resolveApiData();
+          if (apiData !== null) resolveApiData(apiData);
         }, 100);
       }
     }
     requestAnimationFrame(frame);
   }
 
-  function resolveApiData() {
-    if (apiData.market_closed) showMarketClosed(apiData.startup);
-    else if (apiData.error) showError(apiData.error);
-    else showResult(apiData);
+  function resolveApiData(data) {
+    if (data.market_closed) showMarketClosed(data.startup);
+    else if (data.error) showError(data.error);
+    else showResult(data);
   }
 
   function showMarketClosed(isStartup) {
