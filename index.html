@@ -893,20 +893,25 @@
 
   function showResult(data) {
     clearInterval(countdownInterval); clearInterval(accInterval);
-    const dir = data.signal;
 
+    const dir = (data.signal || '').toUpperCase();
+    if (dir !== 'CALL' && dir !== 'PUT') {
+      showError('Invalid signal received. Please try again.');
+      return;
+    }
+
+    const dirLower = dir.toLowerCase();
     document.getElementById('signalArrow').textContent = dir === 'CALL' ? '↑' : '↓';
-    document.getElementById('signalArrow').className = 'signal-arrow ' + dir.toLowerCase();
+    document.getElementById('signalArrow').className = 'signal-arrow ' + dirLower;
     document.getElementById('signalDirection').textContent = dir;
-    document.getElementById('signalDirection').className = 'signal-direction ' + dir.toLowerCase();
-    document.getElementById('signalGlow').className = 'signal-glow ' + dir.toLowerCase();
-    document.getElementById('s3PairName').textContent = selectedPair.name;
-    document.getElementById('s3PairBadge').textContent = selectedPair.name;
+    document.getElementById('signalDirection').className = 'signal-direction ' + dirLower;
+    document.getElementById('signalGlow').className = 'signal-glow ' + dirLower;
+    document.getElementById('s3PairName').textContent = selectedPair?.name ?? '';
+    document.getElementById('s3PairBadge').textContent = selectedPair?.name ?? '';
     document.getElementById('timesupOverlay').classList.remove('show');
 
     document.getElementById('s2b').classList.add('hidden-left');
-    const s3 = document.getElementById('s3');
-    s3.classList.remove('hidden', 'hidden-left');
+    document.getElementById('s3').classList.remove('hidden', 'hidden-left');
 
     startCountdown(60, dir);
   }
