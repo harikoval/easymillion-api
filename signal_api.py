@@ -114,6 +114,11 @@ def health():
     return jsonify({"status": "ok"}), 200
 
 
+@app.route("/ping")
+def ping():
+    return jsonify({"ok": True}), 200
+
+
 @app.route("/debug")
 def debug_signal():
     pair = request.args.get("pair", "EUR/USD")

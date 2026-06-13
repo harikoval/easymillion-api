@@ -885,16 +885,25 @@
     let animationDone = false;
     let apiData = null;
 
-    fetch(`${API_BASE}/signal?pair=${encodeURIComponent(selectedPair.name)}`)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    fetch(`${API_BASE}/signal?pair=${encodeURIComponent(selectedPair.name)}`, { signal: controller.signal })
       .then(r => r.json())
       .then(data => {
+        clearTimeout(timeoutId);
         if (data.market_closed) apiData = { market_closed: true };
         else if (data.error) apiData = { error: data.error };
         else apiData = data;
         if (animationDone) resolveApiData();
       })
-      .catch(() => {
-        apiData = { error: 'Signal server unavailable. Make sure signal_api.py is running.' };
+      .catch(err => {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+          apiData = { market_closed: true, startup: true };
+        } else {
+          apiData = { error: 'Signal server unavailable. Make sure signal_api.py is running.' };
+        }
         if (animationDone) resolveApiData();
       });
 
@@ -925,12 +934,26 @@
   }
 
   function resolveApiData() {
-    if (apiData.market_closed) showMarketClosed();
+    if (apiData.market_closed) showMarketClosed(apiData.startup);
     else if (apiData.error) showError(apiData.error);
     else showResult(apiData);
   }
 
-  function showMarketClosed() {
+  function showMarketClosed(isStartup) {
+    const title = document.querySelector('#s4 .closed-title');
+    const msg = document.querySelector('#s4 .closed-message');
+    const emoji = document.querySelector('#s4 .closed-moon-emoji');
+    if (isStartup) {
+      emoji.textContent = '⏳';
+      title.textContent = 'Server Starting Up';
+      title.style.cssText = 'color:var(--blue);text-shadow:0 0 10px var(--blue),0 0 30px var(--blue)';
+      msg.innerHTML = 'The server is waking up.<br>Please try again in <strong>10 seconds</strong> ☕';
+    } else {
+      emoji.textContent = '🌙';
+      title.textContent = 'Markets Closed';
+      title.style.cssText = '';
+      msg.innerHTML = 'Forex markets are resting this weekend.<br>Come back <strong>Monday</strong> and catch<br>the best signals 💤';
+    }
     document.getElementById('s2b').classList.add('hidden-left');
     document.getElementById('s4').classList.remove('hidden', 'hidden-left');
     try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('warning'); } catch(e) {}
@@ -1003,6 +1026,9 @@
     document.getElementById('loadingBar').style.width = '0%';
     document.getElementById('s2b').classList.add('hidden');
   }
+
+  // Keep Railway awake — ping every 5 minutes
+  setInterval(() => fetch(`${API_BASE}/ping`).catch(() => {}), 5 * 60 * 1000);
 
   renderPairs(pairs);
 </script>
