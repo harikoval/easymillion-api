@@ -56,11 +56,11 @@
     99% { opacity:0.9; text-shadow:none; }
   }
 
-  /* ── SCREEN 0: HOME ── */
+  /* ── SCREEN 0: PAIR SELECTION ── */
   #s0 {
-    align-items: center;
-    justify-content: space-between;
-    padding: max(20px, env(safe-area-inset-top, 20px)) 28px max(20px, env(safe-area-inset-bottom, 20px));
+    flex-direction: column;
+    overflow: hidden;
+    padding-top: max(0px, env(safe-area-inset-top, 0px));
   }
 
   .home-logo-area { text-align: center; flex-shrink: 0; }
@@ -597,46 +597,20 @@
 </head>
 <body>
 
-<!-- SCREEN 0: Home -->
+<!-- SCREEN 0: Pair Selection -->
 <div class="screen" id="s0">
-  <div class="home-logo-area">
-    <div class="home-logo">EASY MILLION</div>
-    <div class="home-subtitle">AI-Powered Trading Signals</div>
+  <div style="text-align:center;padding:24px 24px 14px;flex-shrink:0">
+    <div class="home-logo" style="font-size:26px;letter-spacing:4px">EASY MILLION</div>
+    <div class="home-subtitle" style="margin-top:6px">Select a currency pair</div>
   </div>
-
-  <div class="deco-wrap">
-    <div class="deco-ring deco-ring-1"></div>
-    <div class="deco-ring deco-ring-2"></div>
-    <svg class="deco-arc deco-arc-outer" viewBox="0 0 210 210" width="160" height="160">
-      <circle cx="105" cy="105" r="98" fill="none" stroke="rgba(0,255,136,0.75)" stroke-width="2"
-              stroke-linecap="round" stroke-dasharray="88 527"/>
+  <div class="sheet-search-wrap">
+    <svg class="search-icon" viewBox="0 0 20 20" fill="none">
+      <circle cx="8.5" cy="8.5" r="5.5" stroke="white" stroke-width="1.5"/>
+      <path d="M13 13L17 17" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
     </svg>
-    <svg class="deco-arc deco-arc-inner" viewBox="0 0 160 160" width="120" height="120">
-      <circle cx="80" cy="80" r="72" fill="none" stroke="rgba(0,180,255,0.75)" stroke-width="2"
-              stroke-linecap="round" stroke-dasharray="60 392"/>
-    </svg>
-    <div class="deco-center-dot"></div>
+    <input class="search-input" id="searchInput" type="text" placeholder="Search pairs..." oninput="filterPairs(this.value)">
   </div>
-
-  <div class="home-btn-area">
-    <button class="home-get-btn" onclick="openSheet()">GET SIGNAL</button>
-  </div>
-</div>
-
-<!-- Bottom Sheet -->
-<div id="sheetOverlay" onclick="handleOverlayTap(event)">
-  <div id="bottomSheet">
-    <div class="sheet-handle" id="sheetHandle"></div>
-    <div class="sheet-label">Select Currency Pair</div>
-    <div class="sheet-search-wrap">
-      <svg class="search-icon" viewBox="0 0 20 20" fill="none">
-        <circle cx="8.5" cy="8.5" r="5.5" stroke="white" stroke-width="1.5"/>
-        <path d="M13 13L17 17" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
-      <input class="search-input" id="searchInput" type="text" placeholder="Search pairs..." oninput="filterPairs(this.value)">
-    </div>
-    <div class="sheet-pairs" id="pairsList"></div>
-  </div>
+  <div class="sheet-pairs" id="pairsList"></div>
 </div>
 
 <!-- SCREEN 2: Get Signal -->
@@ -743,8 +717,8 @@
     </div>
     <div class="closed-title">Markets Closed</div>
     <div class="closed-message">
-      Forex markets are resting this weekend.<br>
-      Come back <strong>Monday</strong> and catch<br>the best signals 💤
+      Forex markets rest on weekends.<br>
+      Come back <strong>Monday</strong>! 💤
     </div>
   </div>
   <div class="closed-bottom">
@@ -783,10 +757,6 @@
   let countdownInterval = null;
   let accInterval = null;
 
-  const overlay = document.getElementById('sheetOverlay');
-  const sheet = document.getElementById('bottomSheet');
-  const handle = document.getElementById('sheetHandle');
-
   function renderPairs(list) {
     const el = document.getElementById('pairsList');
     if (!list.length) {
@@ -809,46 +779,10 @@
     renderPairs(pairs.filter(p => p.name.toLowerCase().includes(q.toLowerCase())));
   }
 
-  function openSheet() {
-    document.getElementById('searchInput').value = '';
-    renderPairs(pairs);
-    overlay.classList.add('open');
-    try { window.Telegram?.WebApp?.HapticFeedback?.selectionChanged(); } catch(e) {}
-  }
-
-  function closeSheet() {
-    sheet.style.transform = '';
-    overlay.classList.remove('open');
-  }
-
-  function handleOverlayTap(e) {
-    if (e.target === overlay) closeSheet();
-  }
-
-  // Drag handle to dismiss
-  let dragStartY = 0;
-  handle.addEventListener('touchstart', e => {
-    dragStartY = e.touches[0].clientY;
-    sheet.style.transition = 'none';
-  }, { passive: true });
-
-  handle.addEventListener('touchmove', e => {
-    const dy = Math.max(0, e.touches[0].clientY - dragStartY);
-    sheet.style.transform = `translateY(${dy}px)`;
-  }, { passive: true });
-
-  handle.addEventListener('touchend', e => {
-    const dy = e.changedTouches[0].clientY - dragStartY;
-    sheet.style.transition = '';
-    sheet.style.transform = '';
-    if (dy > 100) closeSheet();
-  });
-
   function selectPair(name) {
     selectedPair = pairs.find(p => p.name === name);
-    closeSheet();
     document.getElementById('s2PairName').textContent = selectedPair.name;
-    setTimeout(() => transitionTo('s0', 's2'), 320);
+    transitionTo('s0', 's2');
     try { window.Telegram?.WebApp?.HapticFeedback?.selectionChanged(); } catch(e) {}
   }
 
@@ -866,6 +800,17 @@
   }
 
   function startLoading(e) {
+    const day = new Date().getDay(); // 0=Sunday, 6=Saturday
+    if (day === 0 || day === 6) {
+      document.querySelector('#s4 .closed-moon-emoji').textContent = '🌙';
+      document.querySelector('#s4 .closed-title').textContent = 'Markets Closed';
+      document.querySelector('#s4 .closed-title').style.cssText = '';
+      document.querySelector('#s4 .closed-message').innerHTML = 'Forex markets rest on weekends.<br>Come back <strong>Monday</strong>! 💤';
+      transitionTo('s2', 's4');
+      try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('warning'); } catch(e) {}
+      return;
+    }
+
     const btn = e.currentTarget;
     const size = btn.getBoundingClientRect().width;
     const ripple = document.createElement('div');
