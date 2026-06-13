@@ -2,6 +2,7 @@ import os
 import requests
 import pandas as pd
 import ta
+from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -252,6 +253,10 @@ def debug_signal():
 @app.route("/signal")
 def get_signal():
     pair = request.args.get("pair", "EUR/USD")
+
+    weekday = datetime.now(timezone.utc).weekday()  # 0=Mon … 5=Sat, 6=Sun
+    if weekday >= 5:
+        return jsonify({"market_closed": True, "message": "Markets are closed on weekends"})
 
     try:
         df = fetch_candles(pair)
