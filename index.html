@@ -878,65 +878,52 @@
     document.getElementById('s2').classList.add('hidden-left');
     document.getElementById('s2b').classList.remove('hidden');
 
+    // Visual animation — runs independently, purely cosmetic
     const bar = document.getElementById('loadingBar');
     const textEl = document.getElementById('loadingText');
     const phrases = ['Analyzing market...','Checking indicators...','Reading RSI...','Calculating signal...'];
-    let phraseIndex = 0, startTime = performance.now(), lastPhrase = startTime;
-    let animationDone = false;
-    let apiData = null;
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-    fetch(`${API_BASE}/signal?pair=${encodeURIComponent(selectedPair.name)}`, { signal: controller.signal })
-      .then(r => r.json())
-      .then(data => {
-        clearTimeout(timeoutId);
-        if (data.market_closed) apiData = { market_closed: true };
-        else if (data.error) apiData = { error: data.error };
-        else apiData = data;
-        if (animationDone) resolveApiData(apiData);
-      })
-      .catch(err => {
-        clearTimeout(timeoutId);
-        if (err.name === 'AbortError') {
-          apiData = { market_closed: true, startup: true };
-        } else {
-          apiData = { error: 'Signal server unavailable. Make sure signal_api.py is running.' };
-        }
-        if (animationDone) resolveApiData(apiData);
-      });
-
+    let phraseIndex = 0;
+    const startTime = performance.now();
+    let lastPhrase = startTime;
+    bar.style.width = '0%';
     textEl.style.transition = 'none';
     textEl.style.opacity = '1';
     textEl.textContent = phrases[0];
-
     function frame(now) {
-      const elapsed = now - startTime;
-      const progress = Math.min(elapsed / 3000, 1);
-      bar.style.width = (progress * 100) + '%';
+      bar.style.width = (Math.min((now - startTime) / 3000, 1) * 100) + '%';
       if (now - lastPhrase > 750 && phraseIndex < phrases.length - 1) {
         phraseIndex++; lastPhrase = now;
         textEl.style.transition = 'opacity 0.2s';
         textEl.style.opacity = '0';
         setTimeout(() => { textEl.textContent = phrases[phraseIndex]; textEl.style.opacity = '1'; }, 200);
       }
-      if (progress < 1) {
-        requestAnimationFrame(frame);
-      } else {
-        setTimeout(() => {
-          animationDone = true;
-          if (apiData !== null) resolveApiData(apiData);
-        }, 100);
-      }
+      if (now - startTime < 3000) requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);
-  }
 
-  function resolveApiData(data) {
-    if (data.market_closed) showMarketClosed(data.startup);
-    else if (data.error) showError(data.error);
-    else showResult(data);
+    // Fetch with 8 second timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const fetchPromise = fetch(
+      `${API_BASE}/signal?pair=${encodeURIComponent(selectedPair.name)}`,
+      { signal: controller.signal }
+    )
+      .then(r => r.json())
+      .catch(err => {
+        if (err.name === 'AbortError') return { market_closed: true, startup: true };
+        return { error: 'Signal server unavailable. Please try again.' };
+      })
+      .finally(() => clearTimeout(timeoutId));
+
+    // Wait for both the 3s animation AND the fetch to finish, then show result
+    Promise.all([
+      new Promise(resolve => setTimeout(resolve, 3000)),
+      fetchPromise
+    ]).then(([, data]) => {
+      if (data.market_closed) showMarketClosed(data.startup);
+      else if (data.error) showError(data.error);
+      else showResult(data);
+    });
   }
 
   function showMarketClosed(isStartup) {
