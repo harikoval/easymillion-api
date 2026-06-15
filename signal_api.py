@@ -96,10 +96,10 @@ def calc_williams_r(high: pd.Series, low: pd.Series, close: pd.Series,
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
 
-def fetch_candles(pair: str, outputsize: int = 100) -> pd.DataFrame:
+def fetch_candles(pair: str, outputsize: int = 100, interval: str = "1min") -> pd.DataFrame:
     params = {
         "symbol": pair,
-        "interval": "1min",
+        "interval": interval,
         "outputsize": outputsize,
         "apikey": API_KEY,
     }
@@ -113,6 +113,24 @@ def fetch_candles(pair: str, outputsize: int = 100) -> pd.DataFrame:
     for col in ("open", "high", "low", "close"):
         df[col] = pd.to_numeric(df[col])
     return df
+
+
+def resample_3min(df: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate 1-min candles into 3-min candles using consecutive groups of 3."""
+    n = (len(df) // 3) * 3  # drop any trailing incomplete group
+    groups = []
+    for i in range(0, n, 3):
+        g = df.iloc[i:i + 3]
+        groups.append({
+            "open":  float(g["open"].iloc[0]),
+            "high":  float(g["high"].max()),
+            "low":   float(g["low"].min()),
+            "close": float(g["close"].iloc[-1]),
+        })
+    out = pd.DataFrame(groups)
+    for col in ("open", "high", "low", "close"):
+        out[col] = pd.to_numeric(out[col])
+    return out.reset_index(drop=True)
 
 
 # ── Confluence voting ─────────────────────────────────────────────────────────
@@ -261,19 +279,33 @@ def ping():
 @app.route("/signal")
 def get_signal():
     pair = request.args.get("pair", "EUR/USD")
+    expiry_str = request.args.get("expiry", "1")
+    expiry_minutes = int(expiry_str) if expiry_str in ("1", "3", "5") else 1
 
     weekday = datetime.now(timezone.utc).weekday()  # 0=Mon … 5=Sat, 6=Sun
     if weekday >= 5:
         return jsonify({"market_closed": True, "message": "Markets are closed on weekends"})
 
     try:
-        df = fetch_candles(pair)
+        if expiry_minutes == 5:
+            df = fetch_candles(pair, outputsize=100, interval="5min")
+            if len(df) < 30:
+                return jsonify({"error": "Insufficient 5-minute candle data."}), 502
+        elif expiry_minutes == 3:
+            df_1min = fetch_candles(pair, outputsize=300, interval="1min")
+            df = resample_3min(df_1min)
+            if len(df) < 30:
+                return jsonify({"error": "Insufficient data for 3-minute signal."}), 502
+        else:
+            df = fetch_candles(pair, outputsize=100)
+
         direction, accuracy, votes, bull_count, bear_count, raw = calculate_signal(df)
 
         if direction is None:
             return jsonify({
                 "no_signal": True,
                 "pair": pair,
+                "expiry": expiry_minutes,
                 "message": f"No clear signal for {pair} right now.",
             })
 
@@ -282,7 +314,7 @@ def get_signal():
             "signal": direction,
             "accuracy": accuracy,
             "pair": pair,
-            "expiry": "1 min",
+            "expiry": expiry_minutes,
             "entry_price": entry_price,
             "votes": votes,
             "bullish_votes": bull_count,
