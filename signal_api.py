@@ -1,7 +1,7 @@
 import os
 import requests
+import numpy as np
 import pandas as pd
-import pandas_ta as pta
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -16,6 +16,79 @@ API_KEY = os.getenv("TWELVEDATA_API_KEY")
 TWELVEDATA_URL = "https://api.twelvedata.com/time_series"
 
 
+# ── Indicator helpers (pandas/numpy only) ─────────────────────────────────────
+
+def _ema(series: pd.Series, period: int) -> pd.Series:
+    return series.ewm(span=period, adjust=False).mean()
+
+
+def _wilder_smooth(series: pd.Series, period: int) -> pd.Series:
+    """Wilder's RMA: seed with mean of first `period` values, then decay."""
+    arr = series.values.astype(float)
+    out = np.full(len(arr), np.nan)
+    # skip leading NaNs (e.g. first row of diff/shift)
+    start = 0
+    while start < len(arr) and np.isnan(arr[start]):
+        start += 1
+    if start + period > len(arr):
+        return pd.Series(out, index=series.index)
+    out[start + period - 1] = arr[start : start + period].mean()
+    for i in range(start + period, len(arr)):
+        if not np.isnan(arr[i]) and not np.isnan(out[i - 1]):
+            out[i] = (out[i - 1] * (period - 1) + arr[i]) / period
+    return pd.Series(out, index=series.index)
+
+
+def calc_rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    delta = close.diff()
+    avg_gain = _wilder_smooth(delta.clip(lower=0.0), period)
+    avg_loss = _wilder_smooth((-delta).clip(lower=0.0), period)
+    rs = avg_gain / avg_loss
+    return 100.0 - 100.0 / (1.0 + rs)
+
+
+def calc_macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
+    macd_line = _ema(close, fast) - _ema(close, slow)
+    signal_line = _ema(macd_line, signal)
+    return macd_line, signal_line
+
+
+def calc_bbands(close: pd.Series, period: int = 20, num_std: float = 2.0):
+    mid = close.rolling(period).mean()
+    std = close.rolling(period).std()  # ddof=1, matches TradingView / most TA tools
+    return mid - num_std * std, mid + num_std * std  # lower, upper
+
+
+def calc_stoch(high: pd.Series, low: pd.Series, close: pd.Series,
+               k: int = 14, smooth_k: int = 3) -> pd.Series:
+    lowest_low = low.rolling(k).min()
+    highest_high = high.rolling(k).max()
+    raw_k = 100.0 * (close - lowest_low) / (highest_high - lowest_low)
+    return raw_k.rolling(smooth_k).mean()  # smoothed %K
+
+
+def calc_adx(high: pd.Series, low: pd.Series, close: pd.Series,
+             period: int = 14):
+    ph, pl, pc = high.shift(1), low.shift(1), close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - pc).abs(),
+        (low - pc).abs(),
+    ], axis=1).max(axis=1)
+    up_move = high - ph
+    dn_move = pl - low
+    plus_dm = up_move.where((up_move > dn_move) & (up_move > 0), 0.0)
+    minus_dm = dn_move.where((dn_move > up_move) & (dn_move > 0), 0.0)
+    tr_s = _wilder_smooth(tr, period)
+    plus_di = 100.0 * _wilder_smooth(plus_dm, period) / tr_s
+    minus_di = 100.0 * _wilder_smooth(minus_dm, period) / tr_s
+    dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+    adx = _wilder_smooth(dx, period)
+    return adx, plus_di, minus_di
+
+
+# ── Data fetching ─────────────────────────────────────────────────────────────
+
 def fetch_candles(pair: str, outputsize: int = 100) -> pd.DataFrame:
     params = {
         "symbol": pair,
@@ -26,10 +99,8 @@ def fetch_candles(pair: str, outputsize: int = 100) -> pd.DataFrame:
     resp = requests.get(TWELVEDATA_URL, params=params, timeout=10)
     resp.raise_for_status()
     data = resp.json()
-
     if data.get("status") == "error" or "values" not in data:
         raise ValueError(data.get("message", "Twelve Data error"))
-
     df = pd.DataFrame(data["values"])
     df = df.iloc[::-1].reset_index(drop=True)  # oldest → newest
     for col in ("open", "high", "low", "close"):
@@ -37,23 +108,20 @@ def fetch_candles(pair: str, outputsize: int = 100) -> pd.DataFrame:
     return df
 
 
+# ── Confluence voting ─────────────────────────────────────────────────────────
+
 def calculate_signal(df: pd.DataFrame):
     """
-    5-indicator confluence voting system.
-    Returns (direction, accuracy, votes, bullish_count, bearish_count).
+    5-indicator confluence vote.  Returns:
+      (direction, accuracy, votes, bullish_count, bearish_count)
     direction is None when no clear signal.
     """
-    close = df["close"]
-    high = df["high"]
-    low = df["low"]
+    close, high, low = df["close"], df["high"], df["low"]
+    votes: dict = {}
+    bullish = bearish = 0
 
-    votes = {}
-    bullish = 0
-    bearish = 0
-
-    # ── RSI(14) ──────────────────────────────────────────────
-    rsi_series = pta.rsi(close, length=14)
-    rsi = rsi_series.iloc[-1] if rsi_series is not None else float("nan")
+    # RSI(14): <30 bullish, >70 bearish
+    rsi = calc_rsi(close, 14).iloc[-1]
     if pd.notna(rsi):
         if rsi < 30:
             votes["rsi"] = "bullish"; bullish += 1
@@ -64,88 +132,71 @@ def calculate_signal(df: pd.DataFrame):
     else:
         votes["rsi"] = "neutral"
 
-    # ── MACD(12,26,9) ────────────────────────────────────────
-    macd_df = pta.macd(close, fast=12, slow=26, signal=9)
-    if macd_df is not None and not macd_df.empty:
-        macd_line = macd_df["MACD_12_26_9"].iloc[-1]
-        sig_line = macd_df["MACDs_12_26_9"].iloc[-1]
-        if pd.notna(macd_line) and pd.notna(sig_line):
-            if macd_line > sig_line:
-                votes["macd"] = "bullish"; bullish += 1
-            elif macd_line < sig_line:
-                votes["macd"] = "bearish"; bearish += 1
-            else:
-                votes["macd"] = "neutral"
+    # MACD(12,26,9): MACD line > signal → bullish
+    ml, sl = calc_macd(close, 12, 26, 9)
+    mv, sv = ml.iloc[-1], sl.iloc[-1]
+    if pd.notna(mv) and pd.notna(sv):
+        if mv > sv:
+            votes["macd"] = "bullish"; bullish += 1
+        elif mv < sv:
+            votes["macd"] = "bearish"; bearish += 1
         else:
             votes["macd"] = "neutral"
     else:
         votes["macd"] = "neutral"
 
-    # ── Bollinger Bands(20,2) ─────────────────────────────────
-    bb_df = pta.bbands(close, length=20, std=2)
-    if bb_df is not None and not bb_df.empty:
-        bbl = bb_df["BBL_20_2.0"].iloc[-1]
-        bbu = bb_df["BBU_20_2.0"].iloc[-1]
-        last_close = close.iloc[-1]
-        if pd.notna(bbl) and pd.notna(bbu):
-            if last_close <= bbl:
-                votes["bbands"] = "bullish"; bullish += 1
-            elif last_close >= bbu:
-                votes["bbands"] = "bearish"; bearish += 1
-            else:
-                votes["bbands"] = "neutral"
+    # Bollinger Bands(20,2): close ≤ lower → bullish, ≥ upper → bearish
+    bbl, bbu = calc_bbands(close, 20, 2.0)
+    last_close = close.iloc[-1]
+    lo, hi = bbl.iloc[-1], bbu.iloc[-1]
+    if pd.notna(lo) and pd.notna(hi):
+        if last_close <= lo:
+            votes["bbands"] = "bullish"; bullish += 1
+        elif last_close >= hi:
+            votes["bbands"] = "bearish"; bearish += 1
         else:
             votes["bbands"] = "neutral"
     else:
         votes["bbands"] = "neutral"
 
-    # ── Stochastic(14,3,3) ───────────────────────────────────
-    stoch_df = pta.stoch(high, low, close, k=14, d=3, smooth_k=3)
-    if stoch_df is not None and not stoch_df.empty:
-        stoch_k = stoch_df["STOCHk_14_3_3"].iloc[-1]
-        if pd.notna(stoch_k):
-            if stoch_k < 20:
-                votes["stoch"] = "bullish"; bullish += 1
-            elif stoch_k > 80:
-                votes["stoch"] = "bearish"; bearish += 1
-            else:
-                votes["stoch"] = "neutral"
+    # Stochastic(14,3,3): %K < 20 → bullish, > 80 → bearish
+    stoch_k = calc_stoch(high, low, close, 14, 3).iloc[-1]
+    if pd.notna(stoch_k):
+        if stoch_k < 20:
+            votes["stoch"] = "bullish"; bullish += 1
+        elif stoch_k > 80:
+            votes["stoch"] = "bearish"; bearish += 1
         else:
             votes["stoch"] = "neutral"
     else:
         votes["stoch"] = "neutral"
 
-    # ── ADX(14) with +DI / -DI ───────────────────────────────
-    adx_df = pta.adx(high, low, close, length=14)
-    if adx_df is not None and not adx_df.empty:
-        adx_val = adx_df["ADX_14"].iloc[-1]
-        dmp = adx_df["DMP_14"].iloc[-1]
-        dmn = adx_df["DMN_14"].iloc[-1]
-        if pd.notna(adx_val) and pd.notna(dmp) and pd.notna(dmn):
-            if adx_val > 20 and dmp > dmn:
-                votes["adx"] = "bullish"; bullish += 1
-            elif adx_val > 20 and dmn > dmp:
-                votes["adx"] = "bearish"; bearish += 1
-            else:
-                votes["adx"] = "neutral"
+    # ADX(14): ADX > 20 and +DI > -DI → bullish; -DI > +DI → bearish
+    adx, plus_di, minus_di = calc_adx(high, low, close, 14)
+    av, dmp, dmn = adx.iloc[-1], plus_di.iloc[-1], minus_di.iloc[-1]
+    if pd.notna(av) and pd.notna(dmp) and pd.notna(dmn):
+        if av > 20 and dmp > dmn:
+            votes["adx"] = "bullish"; bullish += 1
+        elif av > 20 and dmn > dmp:
+            votes["adx"] = "bearish"; bearish += 1
         else:
             votes["adx"] = "neutral"
     else:
         votes["adx"] = "neutral"
 
-    # ── Decision ─────────────────────────────────────────────
+    # Decision: need ≥2 agreeing votes and a clear majority
     if bullish >= 2 and bullish > bearish:
-        direction = "BUY"
-        winning = bullish
+        direction, winning = "BUY", bullish
     elif bearish >= 2 and bearish > bullish:
-        direction = "SELL"
-        winning = bearish
+        direction, winning = "SELL", bearish
     else:
         return None, None, votes, bullish, bearish
 
     accuracy = {2: 60, 3: 70, 4: 80, 5: 90}.get(min(winning, 5), 60)
     return direction, accuracy, votes, bullish, bearish
 
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def health():
@@ -211,18 +262,11 @@ def get_result():
     try:
         df = fetch_candles(pair, outputsize=1)
         exit_price = round(float(df["close"].iloc[-1]), 5)
-
         if direction == "BUY":
             result = "WIN" if exit_price > entry else "LOSS"
         else:
             result = "WIN" if exit_price < entry else "LOSS"
-
-        return jsonify({
-            "result": result,
-            "entry": entry,
-            "exit": exit_price,
-            "pair": pair,
-        })
+        return jsonify({"result": result, "entry": entry, "exit": exit_price, "pair": pair})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -238,8 +282,7 @@ def debug_signal():
     try:
         df = fetch_candles(pair)
         direction, accuracy, votes, bull_count, bear_count = calculate_signal(df)
-        price_range = round(df["close"].max() - df["close"].min(), 6)
-        unique_closes = int(df["close"].nunique())
+        price_range = round(float(df["close"].max() - df["close"].min()), 6)
         entry_price = round(float(df["close"].iloc[-1]), 5)
         return jsonify({
             "api_key_set": api_key_set,
@@ -247,7 +290,6 @@ def debug_signal():
             "pair": pair,
             "candles": len(df),
             "price_range": price_range,
-            "unique_closes": unique_closes,
             "entry_price": entry_price,
             "bullish_votes": bull_count,
             "bearish_votes": bear_count,
