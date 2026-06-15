@@ -120,12 +120,12 @@ def calculate_signal(df: pd.DataFrame):
     votes: dict = {}
     bullish = bearish = 0
 
-    # RSI(14): <35 bullish, >65 bearish
+    # RSI(14): <33 bullish, >67 bearish
     rsi = calc_rsi(close, 14).iloc[-1]
     if pd.notna(rsi):
-        if rsi < 35:
+        if rsi < 33:
             votes["rsi"] = "bullish"; bullish += 1
-        elif rsi > 65:
+        elif rsi > 67:
             votes["rsi"] = "bearish"; bearish += 1
         else:
             votes["rsi"] = "neutral"
@@ -171,28 +171,28 @@ def calculate_signal(df: pd.DataFrame):
     else:
         votes["stoch"] = "neutral"
 
-    # ADX(14): ADX > 15 and +DI > -DI → bullish; -DI > +DI → bearish
+    # ADX(14): ADX > 18 and +DI > -DI → bullish; -DI > +DI → bearish
     adx, plus_di, minus_di = calc_adx(high, low, close, 14)
     av, dmp, dmn = adx.iloc[-1], plus_di.iloc[-1], minus_di.iloc[-1]
     if pd.notna(av) and pd.notna(dmp) and pd.notna(dmn):
-        if av > 15 and dmp > dmn:
+        if av > 18 and dmp > dmn:
             votes["adx"] = "bullish"; bullish += 1
-        elif av > 15 and dmn > dmp:
+        elif av > 18 and dmn > dmp:
             votes["adx"] = "bearish"; bearish += 1
         else:
             votes["adx"] = "neutral"
     else:
         votes["adx"] = "neutral"
 
-    # Decision: any majority wins; no_signal only on exact tie
-    if bullish > bearish:
+    # Decision: need >=2 agreeing votes and a clear majority
+    if bullish >= 2 and bullish > bearish:
         direction, winning = "BUY", bullish
-    elif bearish > bullish:
+    elif bearish >= 2 and bearish > bullish:
         direction, winning = "SELL", bearish
     else:
         return None, None, votes, bullish, bearish
 
-    accuracy = {1: 55, 2: 65, 3: 75, 4: 82, 5: 88}.get(min(winning, 5), 55)
+    accuracy = {2: 60, 3: 70, 4: 80, 5: 90}.get(min(winning, 5), 60)
     return direction, accuracy, votes, bullish, bearish
 
 
