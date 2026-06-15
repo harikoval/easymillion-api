@@ -87,6 +87,13 @@ def calc_adx(high: pd.Series, low: pd.Series, close: pd.Series,
     return adx, plus_di, minus_di
 
 
+def calc_williams_r(high: pd.Series, low: pd.Series, close: pd.Series,
+                    period: int = 14) -> pd.Series:
+    hh = high.rolling(period).max()
+    ll = low.rolling(period).min()
+    return -100.0 * (hh - close) / (hh - ll)
+
+
 # ── Data fetching ─────────────────────────────────────────────────────────────
 
 def fetch_candles(pair: str, outputsize: int = 100) -> pd.DataFrame:
@@ -112,7 +119,7 @@ def fetch_candles(pair: str, outputsize: int = 100) -> pd.DataFrame:
 
 def calculate_signal(df: pd.DataFrame):
     """
-    5-indicator confluence vote.  Returns:
+    7-indicator confluence vote.  Returns:
       (direction, accuracy, votes, bullish_count, bearish_count, raw)
     direction is None when no clear signal.
     """
@@ -184,16 +191,45 @@ def calculate_signal(df: pd.DataFrame):
     else:
         votes["adx"] = "neutral"
 
+    # Williams %R(14): < -80 → bullish (oversold), > -20 → bearish (overbought)
+    wr = calc_williams_r(high, low, close, 14).iloc[-1]
+    if pd.notna(wr):
+        if wr < -80:
+            votes["williams_r"] = "bullish"; bullish += 1
+        elif wr > -20:
+            votes["williams_r"] = "bearish"; bearish += 1
+        else:
+            votes["williams_r"] = "neutral"
+    else:
+        votes["williams_r"] = "neutral"
+
+    # EMA crossover: EMA(9) > EMA(21) → bullish, EMA(9) < EMA(21) → bearish
+    ema9_val  = _ema(close, 9).iloc[-1]
+    ema21_val = _ema(close, 21).iloc[-1]
+    if pd.notna(ema9_val) and pd.notna(ema21_val):
+        if ema9_val > ema21_val:
+            votes["ema_cross"] = "bullish"; bullish += 1
+        elif ema9_val < ema21_val:
+            votes["ema_cross"] = "bearish"; bearish += 1
+        else:
+            votes["ema_cross"] = "neutral"
+    else:
+        votes["ema_cross"] = "neutral"
+
     # Raw indicator values for the frontend analysis panel
     _f1 = lambda v: round(float(v), 1) if pd.notna(v) else None
+    _f5 = lambda v: round(float(v), 5) if pd.notna(v) else None
     raw = {
-        "rsi_value":    _f1(rsi),
-        "macd_status":  "above signal" if votes["macd"] == "bullish" else "below signal" if votes["macd"] == "bearish" else "neutral",
-        "bb_position":  "near lower band" if votes["bbands"] == "bullish" else "near upper band" if votes["bbands"] == "bearish" else "mid-range",
-        "stoch_k_value": _f1(stoch_k),
-        "adx_value":    _f1(av),
-        "di_plus":      _f1(dmp),
-        "di_minus":     _f1(dmn),
+        "rsi_value":       _f1(rsi),
+        "macd_status":     "above signal" if votes["macd"] == "bullish" else "below signal" if votes["macd"] == "bearish" else "neutral",
+        "bb_position":     "near lower band" if votes["bbands"] == "bullish" else "near upper band" if votes["bbands"] == "bearish" else "mid-range",
+        "stoch_k_value":   _f1(stoch_k),
+        "adx_value":       _f1(av),
+        "di_plus":         _f1(dmp),
+        "di_minus":        _f1(dmn),
+        "williams_r_value": _f1(wr),
+        "ema9":            _f5(ema9_val),
+        "ema21":           _f5(ema21_val),
     }
 
     # Decision: need >=2 agreeing votes and a clear majority
@@ -204,7 +240,9 @@ def calculate_signal(df: pd.DataFrame):
     else:
         return None, None, votes, bullish, bearish, raw
 
-    accuracy = {2: 60, 3: 70, 4: 80, 5: 90}.get(min(winning, 5), 60)
+    accuracy = {2: 58, 3: 65, 4: 72, 5: 80, 6: 87, 7: 93}.get(min(winning, 7), 58)
+    if pd.notna(av) and av > 30:
+        accuracy = min(accuracy + 3, 95)
     return direction, accuracy, votes, bullish, bearish, raw
 
 
