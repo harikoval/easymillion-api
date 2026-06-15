@@ -1,7 +1,7 @@
 import os
 import requests
 import pandas as pd
-import ta
+import pandas_ta as pta
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -16,11 +16,11 @@ API_KEY = os.getenv("TWELVEDATA_API_KEY")
 TWELVEDATA_URL = "https://api.twelvedata.com/time_series"
 
 
-def fetch_candles(pair: str) -> pd.DataFrame:
+def fetch_candles(pair: str, outputsize: int = 100) -> pd.DataFrame:
     params = {
         "symbol": pair,
         "interval": "1min",
-        "outputsize": 50,
+        "outputsize": outputsize,
         "apikey": API_KEY,
     }
     resp = requests.get(TWELVEDATA_URL, params=params, timeout=10)
@@ -38,75 +38,113 @@ def fetch_candles(pair: str) -> pd.DataFrame:
 
 
 def calculate_signal(df: pd.DataFrame):
+    """
+    5-indicator confluence voting system.
+    Returns (direction, accuracy, votes, bullish_count, bearish_count).
+    direction is None when no clear signal.
+    """
     close = df["close"]
+    high = df["high"]
+    low = df["low"]
 
-    rsi_series = ta.momentum.RSIIndicator(close=close, window=14).rsi()
-    macd_obj = ta.trend.MACD(close=close, window_fast=12, window_slow=26, window_sign=9)
-    bb_obj = ta.volatility.BollingerBands(close=close, window=20, window_dev=2)
+    votes = {}
+    bullish = 0
+    bearish = 0
 
-    df["RSI"] = rsi_series
-    df["MACD"] = macd_obj.macd()
-    df["MACD_signal"] = macd_obj.macd_signal()
-    df["BB_lower"] = bb_obj.bollinger_lband()
-    df["BB_upper"] = bb_obj.bollinger_hband()
-
-    last = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    rsi = last["RSI"]
-    macd_now = last["MACD"]
-    sig_now = last["MACD_signal"]
-    macd_prev = prev["MACD"]
-    sig_prev = prev["MACD_signal"]
-    close = last["close"]
-    bb_lower = last["BB_lower"]
-    bb_upper = last["BB_upper"]
-
-    macd_crossed_up = macd_prev <= sig_prev and macd_now > sig_now
-    macd_crossed_down = macd_prev >= sig_prev and macd_now < sig_now
-
-    # Determine direction
-    if rsi < 35 and macd_crossed_up:
-        direction = "CALL"
-    elif rsi > 65 and macd_crossed_down:
-        direction = "PUT"
-    elif macd_crossed_up:
-        direction = "CALL"
-    elif macd_crossed_down:
-        direction = "PUT"
-    elif rsi < 50:
-        direction = "CALL"
+    # ── RSI(14) ──────────────────────────────────────────────
+    rsi_series = pta.rsi(close, length=14)
+    rsi = rsi_series.iloc[-1] if rsi_series is not None else float("nan")
+    if pd.notna(rsi):
+        if rsi < 30:
+            votes["rsi"] = "bullish"; bullish += 1
+        elif rsi > 70:
+            votes["rsi"] = "bearish"; bearish += 1
+        else:
+            votes["rsi"] = "neutral"
     else:
-        direction = "PUT"
+        votes["rsi"] = "neutral"
 
-    # Accuracy: count how many indicators agree (0–4 points → 65–89%)
-    score = 0
-
-    if direction == "CALL":
-        if rsi < 35:
-            score += 2
-        elif rsi < 50:
-            score += 1
-        if macd_crossed_up:
-            score += 1
-        elif macd_now > sig_now:
-            score += 0.5
-        if pd.notna(bb_lower) and close <= bb_lower:
-            score += 1
+    # ── MACD(12,26,9) ────────────────────────────────────────
+    macd_df = pta.macd(close, fast=12, slow=26, signal=9)
+    if macd_df is not None and not macd_df.empty:
+        macd_line = macd_df["MACD_12_26_9"].iloc[-1]
+        sig_line = macd_df["MACDs_12_26_9"].iloc[-1]
+        if pd.notna(macd_line) and pd.notna(sig_line):
+            if macd_line > sig_line:
+                votes["macd"] = "bullish"; bullish += 1
+            elif macd_line < sig_line:
+                votes["macd"] = "bearish"; bearish += 1
+            else:
+                votes["macd"] = "neutral"
+        else:
+            votes["macd"] = "neutral"
     else:
-        if rsi > 65:
-            score += 2
-        elif rsi > 50:
-            score += 1
-        if macd_crossed_down:
-            score += 1
-        elif macd_now < sig_now:
-            score += 0.5
-        if pd.notna(bb_upper) and close >= bb_upper:
-            score += 1
+        votes["macd"] = "neutral"
 
-    accuracy = int(65 + min(score / 4, 1) * 24)
-    return direction, accuracy
+    # ── Bollinger Bands(20,2) ─────────────────────────────────
+    bb_df = pta.bbands(close, length=20, std=2)
+    if bb_df is not None and not bb_df.empty:
+        bbl = bb_df["BBL_20_2.0"].iloc[-1]
+        bbu = bb_df["BBU_20_2.0"].iloc[-1]
+        last_close = close.iloc[-1]
+        if pd.notna(bbl) and pd.notna(bbu):
+            if last_close <= bbl:
+                votes["bbands"] = "bullish"; bullish += 1
+            elif last_close >= bbu:
+                votes["bbands"] = "bearish"; bearish += 1
+            else:
+                votes["bbands"] = "neutral"
+        else:
+            votes["bbands"] = "neutral"
+    else:
+        votes["bbands"] = "neutral"
+
+    # ── Stochastic(14,3,3) ───────────────────────────────────
+    stoch_df = pta.stoch(high, low, close, k=14, d=3, smooth_k=3)
+    if stoch_df is not None and not stoch_df.empty:
+        stoch_k = stoch_df["STOCHk_14_3_3"].iloc[-1]
+        if pd.notna(stoch_k):
+            if stoch_k < 20:
+                votes["stoch"] = "bullish"; bullish += 1
+            elif stoch_k > 80:
+                votes["stoch"] = "bearish"; bearish += 1
+            else:
+                votes["stoch"] = "neutral"
+        else:
+            votes["stoch"] = "neutral"
+    else:
+        votes["stoch"] = "neutral"
+
+    # ── ADX(14) with +DI / -DI ───────────────────────────────
+    adx_df = pta.adx(high, low, close, length=14)
+    if adx_df is not None and not adx_df.empty:
+        adx_val = adx_df["ADX_14"].iloc[-1]
+        dmp = adx_df["DMP_14"].iloc[-1]
+        dmn = adx_df["DMN_14"].iloc[-1]
+        if pd.notna(adx_val) and pd.notna(dmp) and pd.notna(dmn):
+            if adx_val > 20 and dmp > dmn:
+                votes["adx"] = "bullish"; bullish += 1
+            elif adx_val > 20 and dmn > dmp:
+                votes["adx"] = "bearish"; bearish += 1
+            else:
+                votes["adx"] = "neutral"
+        else:
+            votes["adx"] = "neutral"
+    else:
+        votes["adx"] = "neutral"
+
+    # ── Decision ─────────────────────────────────────────────
+    if bullish >= 2 and bullish > bearish:
+        direction = "BUY"
+        winning = bullish
+    elif bearish >= 2 and bearish > bullish:
+        direction = "SELL"
+        winning = bearish
+    else:
+        return None, None, votes, bullish, bearish
+
+    accuracy = {2: 60, 3: 70, 4: 80, 5: 90}.get(min(winning, 5), 60)
+    return direction, accuracy, votes, bullish, bearish
 
 
 @app.route("/")
@@ -119,142 +157,6 @@ def ping():
     return jsonify({"ok": True}), 200
 
 
-@app.route("/debug")
-def debug_signal():
-    pair = request.args.get("pair", "EUR/USD")
-
-    api_key_set = bool(API_KEY)
-    api_key_preview = (API_KEY[:4] + "..." + API_KEY[-4:]) if api_key_set and len(API_KEY) >= 8 else ("set" if api_key_set else "NOT SET")
-
-    try:
-        params = {
-            "symbol": pair,
-            "interval": "1min",
-            "outputsize": 50,
-            "apikey": API_KEY,
-        }
-        resp = requests.get(TWELVEDATA_URL, params=params, timeout=10)
-        raw_json = resp.json()
-
-        if raw_json.get("status") == "error" or "values" not in raw_json:
-            return jsonify({
-                "api_key_set": api_key_set,
-                "api_key_preview": api_key_preview,
-                "twelvedata_status": "error",
-                "twelvedata_message": raw_json.get("message", "Unknown error"),
-                "raw_response": raw_json,
-            }), 502
-
-        df = pd.DataFrame(raw_json["values"])
-        df = df.iloc[::-1].reset_index(drop=True)
-        for col in ("open", "high", "low", "close"):
-            df[col] = pd.to_numeric(df[col])
-
-        close = df["close"]
-        rsi_series = ta.momentum.RSIIndicator(close=close, window=14).rsi()
-        macd_obj = ta.trend.MACD(close=close, window_fast=12, window_slow=26, window_sign=9)
-        bb_obj = ta.volatility.BollingerBands(close=close, window=20, window_dev=2)
-
-        df["RSI"] = rsi_series
-        df["MACD"] = macd_obj.macd()
-        df["MACD_signal"] = macd_obj.macd_signal()
-        df["BB_lower"] = bb_obj.bollinger_lband()
-        df["BB_upper"] = bb_obj.bollinger_hband()
-
-        last = df.iloc[-1]
-        prev = df.iloc[-2]
-
-        rsi = last["RSI"]
-        macd_now = last["MACD"]
-        sig_now = last["MACD_signal"]
-        macd_prev = prev["MACD"]
-        sig_prev = prev["MACD_signal"]
-        last_close = last["close"]
-        bb_lower = last["BB_lower"]
-        bb_upper = last["BB_upper"]
-
-        macd_crossed_up = bool(macd_prev <= sig_prev and macd_now > sig_now)
-        macd_crossed_down = bool(macd_prev >= sig_prev and macd_now < sig_now)
-
-        candles_sample = raw_json["values"][:5]
-        price_range = round(df["close"].max() - df["close"].min(), 6)
-        unique_closes = int(df["close"].nunique())
-
-        direction, accuracy = calculate_signal(df)
-
-        score = 0
-        score_breakdown = []
-        if direction == "CALL":
-            if rsi < 35:
-                score += 2
-                score_breakdown.append("RSI < 35 oversold: +2")
-            elif rsi < 50:
-                score += 1
-                score_breakdown.append("RSI < 50 mild bullish: +1")
-            if macd_crossed_up:
-                score += 1
-                score_breakdown.append("MACD crossed UP: +1")
-            elif macd_now > sig_now:
-                score += 0.5
-                score_breakdown.append("MACD above signal: +0.5")
-            if pd.notna(bb_lower) and last_close <= bb_lower:
-                score += 1
-                score_breakdown.append("Price at/below BB lower: +1")
-        else:
-            if rsi > 65:
-                score += 2
-                score_breakdown.append("RSI > 65 overbought: +2")
-            elif rsi > 50:
-                score += 1
-                score_breakdown.append("RSI > 50 mild bearish: +1")
-            if macd_crossed_down:
-                score += 1
-                score_breakdown.append("MACD crossed DOWN: +1")
-            elif macd_now < sig_now:
-                score += 0.5
-                score_breakdown.append("MACD below signal: +0.5")
-            if pd.notna(bb_upper) and last_close >= bb_upper:
-                score += 1
-                score_breakdown.append("Price at/above BB upper: +1")
-
-        return jsonify({
-            "api_key_set": api_key_set,
-            "api_key_preview": api_key_preview,
-            "pair": pair,
-            "candles_received": len(raw_json["values"]),
-            "price_range_50_candles": price_range,
-            "unique_close_prices": unique_closes,
-            "latest_5_candles": candles_sample,
-            "indicators": {
-                "RSI": round(float(rsi), 4) if pd.notna(rsi) else None,
-                "MACD": round(float(macd_now), 6) if pd.notna(macd_now) else None,
-                "MACD_signal": round(float(sig_now), 6) if pd.notna(sig_now) else None,
-                "MACD_prev": round(float(macd_prev), 6) if pd.notna(macd_prev) else None,
-                "MACD_signal_prev": round(float(sig_prev), 6) if pd.notna(sig_prev) else None,
-                "BB_lower": round(float(bb_lower), 6) if pd.notna(bb_lower) else None,
-                "BB_upper": round(float(bb_upper), 6) if pd.notna(bb_upper) else None,
-                "close": round(float(last_close), 6),
-            },
-            "crossovers": {
-                "macd_crossed_up": macd_crossed_up,
-                "macd_crossed_down": macd_crossed_down,
-            },
-            "score": score,
-            "score_breakdown": score_breakdown,
-            "signal": direction,
-            "accuracy": accuracy,
-            "accuracy_formula": f"int(65 + min({score}/4, 1) * 24) = {accuracy}",
-            "warning": "Flat data (price_range near 0) likely means market is closed (weekend/holiday)" if price_range < 0.0002 else None,
-        })
-
-    except Exception as e:
-        return jsonify({
-            "api_key_set": api_key_set,
-            "api_key_preview": api_key_preview,
-            "error": str(e),
-        }), 500
-
-
 @app.route("/signal")
 def get_signal():
     pair = request.args.get("pair", "EUR/USD")
@@ -265,22 +167,98 @@ def get_signal():
 
     try:
         df = fetch_candles(pair)
-        direction, accuracy = calculate_signal(df)
+        direction, accuracy, votes, bull_count, bear_count = calculate_signal(df)
+
+        if direction is None:
+            return jsonify({
+                "no_signal": True,
+                "pair": pair,
+                "message": f"No clear signal for {pair} right now.",
+            })
+
+        entry_price = round(float(df["close"].iloc[-1]), 5)
         return jsonify({
             "signal": direction,
             "accuracy": accuracy,
             "pair": pair,
             "expiry": "1 min",
+            "entry_price": entry_price,
+            "votes": votes,
         })
 
     except requests.exceptions.ConnectionError:
-        return jsonify({"error": "Cannot reach Twelve Data API. Check your internet connection."}), 503
+        return jsonify({"error": "Cannot reach Twelve Data API."}), 503
     except requests.exceptions.Timeout:
         return jsonify({"error": "Twelve Data API timed out."}), 504
     except ValueError as e:
         return jsonify({"error": str(e)}), 502
     except Exception as e:
         return jsonify({"error": f"Internal error: {str(e)}"}), 500
+
+
+@app.route("/result")
+def get_result():
+    pair = request.args.get("pair", "EUR/USD")
+    direction = request.args.get("direction", "BUY").upper()
+    try:
+        entry = float(request.args.get("entry", "0"))
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid entry price"}), 400
+
+    if direction not in ("BUY", "SELL"):
+        return jsonify({"error": "direction must be BUY or SELL"}), 400
+
+    try:
+        df = fetch_candles(pair, outputsize=1)
+        exit_price = round(float(df["close"].iloc[-1]), 5)
+
+        if direction == "BUY":
+            result = "WIN" if exit_price > entry else "LOSS"
+        else:
+            result = "WIN" if exit_price < entry else "LOSS"
+
+        return jsonify({
+            "result": result,
+            "entry": entry,
+            "exit": exit_price,
+            "pair": pair,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/debug")
+def debug_signal():
+    pair = request.args.get("pair", "EUR/USD")
+    api_key_set = bool(API_KEY)
+    api_key_preview = (
+        (API_KEY[:4] + "..." + API_KEY[-4:]) if api_key_set and len(API_KEY) >= 8
+        else ("set" if api_key_set else "NOT SET")
+    )
+    try:
+        df = fetch_candles(pair)
+        direction, accuracy, votes, bull_count, bear_count = calculate_signal(df)
+        price_range = round(df["close"].max() - df["close"].min(), 6)
+        unique_closes = int(df["close"].nunique())
+        entry_price = round(float(df["close"].iloc[-1]), 5)
+        return jsonify({
+            "api_key_set": api_key_set,
+            "api_key_preview": api_key_preview,
+            "pair": pair,
+            "candles": len(df),
+            "price_range": price_range,
+            "unique_closes": unique_closes,
+            "entry_price": entry_price,
+            "bullish_votes": bull_count,
+            "bearish_votes": bear_count,
+            "votes": votes,
+            "signal": direction,
+            "accuracy": accuracy,
+            "no_signal": direction is None,
+            "warning": "Flat data likely means market is closed" if price_range < 0.0002 else None,
+        })
+    except Exception as e:
+        return jsonify({"api_key_set": api_key_set, "api_key_preview": api_key_preview, "error": str(e)}), 500
 
 
 if __name__ == "__main__":
