@@ -120,12 +120,12 @@ def calculate_signal(df: pd.DataFrame):
     votes: dict = {}
     bullish = bearish = 0
 
-    # RSI(14): <30 bullish, >70 bearish
+    # RSI(14): <35 bullish, >65 bearish
     rsi = calc_rsi(close, 14).iloc[-1]
     if pd.notna(rsi):
-        if rsi < 30:
+        if rsi < 35:
             votes["rsi"] = "bullish"; bullish += 1
-        elif rsi > 70:
+        elif rsi > 65:
             votes["rsi"] = "bearish"; bearish += 1
         else:
             votes["rsi"] = "neutral"
@@ -159,40 +159,40 @@ def calculate_signal(df: pd.DataFrame):
     else:
         votes["bbands"] = "neutral"
 
-    # Stochastic(14,3,3): %K < 20 → bullish, > 80 → bearish
+    # Stochastic(14,3,3): %K < 25 → bullish, > 75 → bearish
     stoch_k = calc_stoch(high, low, close, 14, 3).iloc[-1]
     if pd.notna(stoch_k):
-        if stoch_k < 20:
+        if stoch_k < 25:
             votes["stoch"] = "bullish"; bullish += 1
-        elif stoch_k > 80:
+        elif stoch_k > 75:
             votes["stoch"] = "bearish"; bearish += 1
         else:
             votes["stoch"] = "neutral"
     else:
         votes["stoch"] = "neutral"
 
-    # ADX(14): ADX > 20 and +DI > -DI → bullish; -DI > +DI → bearish
+    # ADX(14): ADX > 15 and +DI > -DI → bullish; -DI > +DI → bearish
     adx, plus_di, minus_di = calc_adx(high, low, close, 14)
     av, dmp, dmn = adx.iloc[-1], plus_di.iloc[-1], minus_di.iloc[-1]
     if pd.notna(av) and pd.notna(dmp) and pd.notna(dmn):
-        if av > 20 and dmp > dmn:
+        if av > 15 and dmp > dmn:
             votes["adx"] = "bullish"; bullish += 1
-        elif av > 20 and dmn > dmp:
+        elif av > 15 and dmn > dmp:
             votes["adx"] = "bearish"; bearish += 1
         else:
             votes["adx"] = "neutral"
     else:
         votes["adx"] = "neutral"
 
-    # Decision: need ≥2 agreeing votes and a clear majority
-    if bullish >= 2 and bullish > bearish:
+    # Decision: any majority wins; no_signal only on exact tie
+    if bullish > bearish:
         direction, winning = "BUY", bullish
-    elif bearish >= 2 and bearish > bullish:
+    elif bearish > bullish:
         direction, winning = "SELL", bearish
     else:
         return None, None, votes, bullish, bearish
 
-    accuracy = {2: 60, 3: 70, 4: 80, 5: 90}.get(min(winning, 5), 60)
+    accuracy = {1: 55, 2: 65, 3: 75, 4: 82, 5: 88}.get(min(winning, 5), 55)
     return direction, accuracy, votes, bullish, bearish
 
 
