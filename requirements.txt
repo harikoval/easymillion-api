@@ -1,6 +1,7 @@
 flask==3.0.2
 flask-cors==4.0.0
 requests==2.31.0
+numpy<2
 pandas==2.2.1
 pandas_ta>=0.3.14b
 python-dotenv==1.0.1
