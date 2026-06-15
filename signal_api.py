@@ -113,7 +113,7 @@ def fetch_candles(pair: str, outputsize: int = 100) -> pd.DataFrame:
 def calculate_signal(df: pd.DataFrame):
     """
     5-indicator confluence vote.  Returns:
-      (direction, accuracy, votes, bullish_count, bearish_count)
+      (direction, accuracy, votes, bullish_count, bearish_count, raw)
     direction is None when no clear signal.
     """
     close, high, low = df["close"], df["high"], df["low"]
@@ -184,16 +184,28 @@ def calculate_signal(df: pd.DataFrame):
     else:
         votes["adx"] = "neutral"
 
+    # Raw indicator values for the frontend analysis panel
+    _f1 = lambda v: round(float(v), 1) if pd.notna(v) else None
+    raw = {
+        "rsi_value":    _f1(rsi),
+        "macd_status":  "above signal" if votes["macd"] == "bullish" else "below signal" if votes["macd"] == "bearish" else "neutral",
+        "bb_position":  "near lower band" if votes["bbands"] == "bullish" else "near upper band" if votes["bbands"] == "bearish" else "mid-range",
+        "stoch_k_value": _f1(stoch_k),
+        "adx_value":    _f1(av),
+        "di_plus":      _f1(dmp),
+        "di_minus":     _f1(dmn),
+    }
+
     # Decision: need >=2 agreeing votes and a clear majority
     if bullish >= 2 and bullish > bearish:
         direction, winning = "BUY", bullish
     elif bearish >= 2 and bearish > bullish:
         direction, winning = "SELL", bearish
     else:
-        return None, None, votes, bullish, bearish
+        return None, None, votes, bullish, bearish, raw
 
     accuracy = {2: 60, 3: 70, 4: 80, 5: 90}.get(min(winning, 5), 60)
-    return direction, accuracy, votes, bullish, bearish
+    return direction, accuracy, votes, bullish, bearish, raw
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -218,7 +230,7 @@ def get_signal():
 
     try:
         df = fetch_candles(pair)
-        direction, accuracy, votes, bull_count, bear_count = calculate_signal(df)
+        direction, accuracy, votes, bull_count, bear_count, raw = calculate_signal(df)
 
         if direction is None:
             return jsonify({
@@ -235,6 +247,9 @@ def get_signal():
             "expiry": "1 min",
             "entry_price": entry_price,
             "votes": votes,
+            "bullish_votes": bull_count,
+            "bearish_votes": bear_count,
+            "raw": raw,
         })
 
     except requests.exceptions.ConnectionError:
@@ -281,7 +296,7 @@ def debug_signal():
     )
     try:
         df = fetch_candles(pair)
-        direction, accuracy, votes, bull_count, bear_count = calculate_signal(df)
+        direction, accuracy, votes, bull_count, bear_count, raw = calculate_signal(df)
         price_range = round(float(df["close"].max() - df["close"].min()), 6)
         entry_price = round(float(df["close"].iloc[-1]), 5)
         return jsonify({
