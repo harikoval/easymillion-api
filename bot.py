@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 from datetime import datetime
 from contextlib import contextmanager
@@ -7,6 +8,9 @@ import psycopg2
 import psycopg2.extras
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+
+# Ensure every print() flushes immediately — required for Railway log visibility
+sys.stdout.reconfigure(line_buffering=True)
 
 load_dotenv()
 
@@ -23,7 +27,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").replace("postgres://", "postgresql:
 
 @contextmanager
 def get_db():
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg2.connect(DATABASE_URL, connect_timeout=10)
     try:
         yield conn
         conn.commit()
@@ -294,6 +298,7 @@ def main():
     if not DATABASE_URL:
         raise ValueError("DATABASE_URL not set")
 
+    print("Connecting to database...")
     init_db()
     print("Database ready.")
 
