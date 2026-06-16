@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dotenv import load_dotenv
 import psycopg2
 import psycopg2.extras
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
@@ -316,6 +317,49 @@ async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"Failed to notify user {uid} of denial: {e}")
 
 
+async def weekly_cleanup(bot):
+    try:
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM access_requests")
+                deleted = cur.rowcount
+        print(f"[cleanup] Weekly reset: cleared {deleted} rows from access_requests")
+    except Exception as e:
+        print(f"[cleanup] DB error during weekly reset: {e}")
+        deleted = -1
+
+    msg = (
+        f"🧹 Weekly reset complete — {deleted} user(s) cleared. "
+        "All users will need to request access again."
+    )
+    for owner_id in OWNER_TELEGRAM_IDS:
+        try:
+            await bot.send_message(chat_id=owner_id, text=msg)
+        except Exception as e:
+            print(f"[cleanup] Failed to notify owner {owner_id}: {e}")
+
+
+async def post_init(application: Application):
+    scheduler = AsyncIOScheduler(timezone="UTC")
+    scheduler.add_job(
+        weekly_cleanup,
+        trigger="cron",
+        day_of_week="mon",
+        hour=0,
+        minute=0,
+        kwargs={"bot": application.bot},
+    )
+    scheduler.start()
+    application.bot_data["scheduler"] = scheduler
+    print("[cleanup] Weekly cleanup scheduled: every Monday 00:00 UTC")
+
+
+async def post_shutdown(application: Application):
+    scheduler = application.bot_data.get("scheduler")
+    if scheduler and scheduler.running:
+        scheduler.shutdown(wait=False)
+
+
 def main():
     if not BOT_TOKEN:
         raise ValueError("TELEGRAM_BOT_TOKEN not set")
@@ -330,7 +374,13 @@ def main():
     init_db()
     print("Database ready.")
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(post_init)
+        .post_shutdown(post_shutdown)
+        .build()
+    )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(request_access, pattern="^request_access$"))
     app.add_handler(CallbackQueryHandler(handle_decision, pattern="^(approve|deny)_"))
