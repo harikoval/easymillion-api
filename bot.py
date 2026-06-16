@@ -121,7 +121,16 @@ def build_notification_text(record, uid, outcome_line=""):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.effective_user.id)
-    record = db_get(uid)
+    try:
+        record = db_get(uid)
+    except Exception as e:
+        print(f"[start] DB error for user {uid}: {e}")
+        await update.message.reply_text(
+            "⚠️ Service temporarily unavailable. Please try again in a moment."
+        )
+        return
+
+    print(f"[start] user={uid} status={record['status'] if record else 'none'}")
 
     if record and record["status"] == "approved":
         await update.message.reply_text(
@@ -151,7 +160,16 @@ async def request_access(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = query.from_user
     uid = str(user.id)
-    record = db_get(uid)
+    try:
+        record = db_get(uid)
+    except Exception as e:
+        print(f"[request_access] DB error for user {uid}: {e}")
+        await query.edit_message_text(
+            "⚠️ Could not process your request. Please try /start again in a moment."
+        )
+        return
+
+    print(f"[request_access] user={uid} status={record['status'] if record else 'none'}")
 
     if record and record["status"] == "approved":
         await query.edit_message_text(
@@ -212,11 +230,21 @@ async def handle_decision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     acting_owner_id = query.from_user.id
+    print(f"[handle_decision] owner={acting_owner_id} data={query.data}")
     if acting_owner_id not in OWNER_TELEGRAM_IDS:
+        print(f"[handle_decision] Rejected: {acting_owner_id} not in OWNER_TELEGRAM_IDS")
         return
 
     action, uid = query.data.split("_", 1)
-    record = db_get(uid)
+    try:
+        record = db_get(uid)
+    except Exception as e:
+        print(f"[handle_decision] DB error for user {uid}: {e}")
+        await context.bot.send_message(
+            chat_id=acting_owner_id,
+            text="⚠️ DB error while processing decision. Please try again."
+        )
+        return
 
     if record is None:
         await query.edit_message_text("⚠️ This request no longer exists.")
@@ -308,7 +336,9 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_decision, pattern="^(approve|deny)_"))
 
     print("Bot is running... Press Ctrl+C to stop.")
-    app.run_polling(drop_pending_updates=True)
+    # drop_pending_updates=False (default) so a Railway restart doesn't silently
+    # discard a queued Approve/Deny callback the owner already tapped.
+    app.run_polling()
 
 
 if __name__ == "__main__":
