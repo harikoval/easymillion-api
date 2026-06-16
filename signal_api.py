@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 import numpy as np
 import pandas as pd
@@ -13,6 +14,10 @@ app = Flask(__name__)
 CORS(app)
 
 API_KEY = os.getenv("TWELVEDATA_API_KEY")
+
+_rate_limit: dict[str, list[float]] = {}
+_RATE_WINDOW = 60   # seconds
+_RATE_MAX = 3       # requests per window
 TWELVEDATA_URL = "https://api.twelvedata.com/time_series"
 
 
@@ -285,6 +290,29 @@ def get_signal():
     weekday = datetime.now(timezone.utc).weekday()  # 0=Mon … 5=Sat, 6=Sun
     if weekday >= 5:
         return jsonify({"market_closed": True, "message": "Markets are closed on weekends"})
+
+    # Per-user rate limiting — 3 requests per 60-second rolling window
+    user_id = (request.args.get("user_id") or "unknown").strip() or "unknown"
+    now = time.time()
+    cutoff = now - _RATE_WINDOW
+
+    # Lazy cleanup: prune stale entries for every tracked user
+    for uid in list(_rate_limit.keys()):
+        _rate_limit[uid] = [t for t in _rate_limit[uid] if t > cutoff]
+        if not _rate_limit[uid]:
+            del _rate_limit[uid]
+
+    user_times = _rate_limit.get(user_id, [])
+    if len(user_times) >= _RATE_MAX:
+        retry_after = max(1, int(min(user_times) + _RATE_WINDOW - now) + 1)
+        return jsonify({
+            "rate_limited": True,
+            "message": "You're requesting signals too quickly. Please wait a moment.",
+            "retry_after_seconds": retry_after,
+        }), 429
+
+    user_times.append(now)
+    _rate_limit[user_id] = user_times
 
     try:
         if expiry_minutes == 5:

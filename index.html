@@ -56,8 +56,78 @@
     99% { opacity:0.9; text-shadow:none; }
   }
 
-  /* ── SCREEN 0: PAIR SELECTION ── */
-  #s0 {
+  /* ── SCREEN 0: HOME ── */
+  .s0-content {
+    position: absolute; inset: 0; z-index: 2;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: flex-start;
+    padding: max(52px, env(safe-area-inset-top, 52px)) 28px 0;
+    pointer-events: none;
+  }
+  .s0-content > * { pointer-events: all; }
+  .s0-brand { text-align: center; }
+  .s0-btn {
+    position: absolute;
+    top: 50%; left: 10%; right: 10%;
+    transform: translateY(-50%);
+    pointer-events: all;
+  }
+
+  /* Ticker marquee */
+  .s0-ticker {
+    position: absolute;
+    top: calc(max(52px, env(safe-area-inset-top, 52px)) + 80px);
+    left: 0; right: 0;
+    overflow: hidden;
+    z-index: 2;
+    pointer-events: none;
+    mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+    -webkit-mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
+  }
+  .s0-ticker-inner {
+    display: flex; white-space: nowrap;
+    animation: tickerScroll 22s linear infinite;
+  }
+  .s0-ticker-inner span {
+    font-size: 11px; letter-spacing: 2px;
+    color: var(--blue);
+    text-shadow: 0 0 8px rgba(0,180,255,0.6);
+    padding-right: 48px;
+  }
+  @keyframes tickerScroll {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-50%); }
+  }
+
+  /* Price label */
+  #chartPrice {
+    position: absolute;
+    z-index: 2;
+    right: 10px;
+    font-size: 11px; font-weight: 700;
+    letter-spacing: 1px;
+    color: rgba(0,255,136,0.85);
+    text-shadow: 0 0 8px rgba(0,255,136,0.5);
+    pointer-events: none;
+    font-variant-numeric: tabular-nums;
+    background: rgba(10,10,15,0.6);
+    padding: 2px 6px; border-radius: 4px;
+  }
+
+  /* Footer tagline */
+  .s0-footer {
+    position: absolute;
+    bottom: max(14px, env(safe-area-inset-bottom, 14px));
+    left: 0; right: 0;
+    text-align: center;
+    font-size: 10px; letter-spacing: 2px;
+    color: var(--muted);
+    z-index: 2; pointer-events: none;
+    text-transform: uppercase;
+  }
+
+  /* ── SCREEN 1: PAIR SELECTION ── */
+  #s1 {
     flex-direction: column;
     overflow: hidden;
     padding-top: max(0px, env(safe-area-inset-top, 0px));
@@ -597,8 +667,35 @@
 </head>
 <body>
 
-<!-- SCREEN 0: Pair Selection -->
+<!-- SCREEN 0: Home -->
 <div class="screen" id="s0">
+  <canvas id="chartCanvas" style="position:absolute;inset:0;pointer-events:none;z-index:0"></canvas>
+  <div style="position:absolute;top:0;left:0;right:0;height:74%;background:linear-gradient(to bottom,var(--bg) 65%,transparent);pointer-events:none;z-index:1"></div>
+  <div style="position:absolute;bottom:0;left:0;right:0;height:80px;background:linear-gradient(transparent,var(--bg) 60%);pointer-events:none;z-index:1"></div>
+  <!-- Ticker -->
+  <div class="s0-ticker">
+    <div class="s0-ticker-inner">
+      <span>EUR/USD • GBP/USD • USD/JPY • USD/CHF • AUD/USD • EUR/JPY • GBP/JPY • NZD/USD • EUR/GBP • USD/CAD • GBP/AUD • EUR/AUD •&nbsp;</span>
+      <span>EUR/USD • GBP/USD • USD/JPY • USD/CHF • AUD/USD • EUR/JPY • GBP/JPY • NZD/USD • EUR/GBP • USD/CAD • GBP/AUD • EUR/AUD •&nbsp;</span>
+    </div>
+  </div>
+  <!-- Price label (positioned by JS) -->
+  <div id="chartPrice"></div>
+  <!-- Foreground -->
+  <div class="s0-content">
+    <div class="s0-brand">
+      <div class="home-logo">EASY MILLION</div>
+      <div class="home-subtitle">AI-Powered Trading Signals</div>
+    </div>
+    <div class="s0-btn">
+      <button class="home-get-btn" onclick="transitionTo('s0','s1')">⚡ GET AI SIGNAL</button>
+    </div>
+  </div>
+  <div class="s0-footer">Powered by AI • Real-time signals</div>
+</div>
+
+<!-- SCREEN 1: Pair Selection -->
+<div class="screen hidden" id="s1">
   <div style="text-align:center;padding:24px 24px 14px;flex-shrink:0">
     <div class="home-logo" style="font-size:26px;letter-spacing:4px">EASY MILLION</div>
     <div class="home-subtitle" style="margin-top:6px">Select a currency pair</div>
@@ -629,7 +726,7 @@
     </div>
   </div>
   <div style="padding:20px;padding-bottom:max(20px,env(safe-area-inset-bottom,20px));text-align:center">
-    <button class="back-btn" onclick="goBack('s2','s0')">← Back</button>
+    <button class="back-btn" onclick="goBack('s2','s1')">← Back</button>
   </div>
 </div>
 
@@ -726,10 +823,30 @@
   </div>
 </div>
 
+<!-- SCREEN 5: Rate Limited -->
+<div class="screen hidden" id="s5">
+  <div class="closed-top">
+    <div class="closed-moon-wrap">
+      <div class="closed-ring closed-ring-1"></div>
+      <div class="closed-ring closed-ring-2"></div>
+      <div class="closed-moon-emoji">⏱️</div>
+    </div>
+    <div class="closed-title" style="color:var(--blue);text-shadow:0 0 10px var(--blue),0 0 30px var(--blue),0 0 60px rgba(0,180,255,0.4)">Slow Down</div>
+    <div class="closed-message" id="s5Message">
+      You're requesting signals too quickly.<br>Please wait a moment.
+    </div>
+  </div>
+  <div class="closed-bottom">
+    <button class="home-get-btn" style="background:linear-gradient(135deg,rgba(0,180,255,0.8),rgba(0,255,136,0.7));animation:none;box-shadow:0 0 25px rgba(0,180,255,0.4)" onclick="goBack('s5','s2')">← BACK</button>
+  </div>
+</div>
+
 <div class="error-toast" id="errorToast"></div>
 
 <script>
   try { window.Telegram?.WebApp?.ready(); window.Telegram?.WebApp?.expand(); } catch(e) {}
+
+  const telegramUserId = String(window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 'unknown');
 
   const API_BASE = 'https://web-production-49c84.up.railway.app';
 
@@ -782,7 +899,7 @@
   function selectPair(name) {
     selectedPair = pairs.find(p => p.name === name);
     document.getElementById('s2PairName').textContent = selectedPair.name;
-    transitionTo('s0', 's2');
+    transitionTo('s1', 's2');
     try { window.Telegram?.WebApp?.HapticFeedback?.selectionChanged(); } catch(e) {}
   }
 
@@ -850,7 +967,7 @@
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8000);
     const fetchPromise = fetch(
-      `${API_BASE}/signal?pair=${encodeURIComponent(selectedPair.name)}`,
+      `${API_BASE}/signal?pair=${encodeURIComponent(selectedPair.name)}&user_id=${encodeURIComponent(telegramUserId)}`,
       { signal: controller.signal }
     )
       .then(r => r.json())
@@ -865,7 +982,8 @@
       new Promise(resolve => setTimeout(resolve, 3000)),
       fetchPromise
     ]).then(([, data]) => {
-      if (data.market_closed) showMarketClosed(data.startup);
+      if (data.rate_limited) showRateLimited(data);
+      else if (data.market_closed) showMarketClosed(data.startup);
       else if (data.error) showError(data.error);
       else showResult(data);
     });
@@ -889,6 +1007,13 @@
     document.getElementById('s2b').classList.add('hidden-left');
     document.getElementById('s4').classList.remove('hidden', 'hidden-left');
     try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('warning'); } catch(e) {}
+  }
+
+  function showRateLimited(data) {
+    document.getElementById('s5Message').textContent = data.message || "You're requesting signals too quickly. Please wait a moment.";
+    document.getElementById('s2b').classList.add('hidden-left');
+    document.getElementById('s5').classList.remove('hidden', 'hidden-left');
+    try { window.Telegram?.WebApp?.HapticFeedback?.notificationOccurred('error'); } catch(e) {}
   }
 
   function showResult(data) {
@@ -964,10 +1089,107 @@
     document.getElementById('s2b').classList.add('hidden');
   }
 
+  function initChart() {
+    const canvas = document.getElementById('chartCanvas');
+    const ctx = canvas.getContext('2d');
+    let W, H, chartTop, chartH, midY;
+
+    function resize() {
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+      chartTop = Math.round(H * 0.7);
+      chartH = H - chartTop;
+      midY = chartTop + chartH * 0.42;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    const CW = 10, GAP = 7, STEP = CW + GAP;
+    const SPEED = 0.5;
+    let candles = [], offset = 0, tick = 0;
+
+    function newCandle(x, prevClose) {
+      const bull = Math.random() > 0.47;
+      const bodySize = 8 + Math.random() * 38;
+      const rev = (midY - prevClose) * 0.1 + (Math.random() - 0.5) * 5;
+      const o = prevClose + rev;
+      const c = o + (bull ? 1 : -1) * bodySize;
+      const clamp = (v) => Math.max(chartTop + 12, Math.min(chartTop + chartH - 90, v));
+      const co = clamp(o), cc = clamp(c);
+      return {
+        x, bull, o: co, c: cc,
+        wt: Math.min(co, cc) - 4 - Math.random() * 11,
+        wb: Math.max(co, cc) + 4 + Math.random() * 11,
+        ph: Math.random() * Math.PI * 2
+      };
+    }
+
+    // Price label
+    const priceEl = document.getElementById('chartPrice');
+    let fakePrice = 1.0842;
+    function updatePrice() {
+      fakePrice += (Math.random() - 0.5) * 0.0012;
+      fakePrice = Math.max(1.06, Math.min(1.12, fakePrice));
+      priceEl.textContent = fakePrice.toFixed(4);
+    }
+    updatePrice();
+    setInterval(updatePrice, 2800);
+
+    let seed = midY;
+    for (let i = 0; i < Math.ceil(W / STEP) + 4; i++) {
+      const c = newCandle(i * STEP, seed); candles.push(c); seed = c.c;
+    }
+
+    function draw() {
+      tick++;
+      ctx.clearRect(0, 0, W, H);
+
+      // Subtle horizontal grid lines
+      ctx.strokeStyle = 'rgba(0,180,255,0.055)';
+      ctx.lineWidth = 1;
+      for (let i = 1; i < 5; i++) {
+        const y = chartTop + (i / 5) * chartH;
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      }
+
+      for (const c of candles) {
+        const x = c.x - offset;
+        if (x + CW < 0 || x > W) continue;
+        const wave = Math.sin(tick * 0.022 + c.ph) * 2.2;
+        const top = Math.min(c.o, c.c) + wave;
+        const bh = Math.max(Math.abs(c.o - c.c), 2);
+        const bodyColor = c.bull ? 'rgba(0,255,136,0.68)' : 'rgba(255,58,92,0.68)';
+        const wickColor = c.bull ? 'rgba(0,255,136,0.32)' : 'rgba(255,58,92,0.32)';
+        // Wick
+        ctx.strokeStyle = wickColor; ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x + CW / 2, c.wt + wave);
+        ctx.lineTo(x + CW / 2, c.wb + wave);
+        ctx.stroke();
+        // Body
+        ctx.fillStyle = bodyColor;
+        ctx.fillRect(x, top, CW, bh);
+      }
+
+      // Keep price label aligned to mid-price line
+      priceEl.style.top = (midY - 9) + 'px';
+
+      offset += SPEED;
+      const last = candles[candles.length - 1];
+      if (last.x - offset < W + STEP) {
+        const nc = newCandle(last.x + STEP, last.c); candles.push(nc);
+      }
+      while (candles.length && candles[0].x - offset < -STEP * 2) candles.shift();
+      requestAnimationFrame(draw);
+    }
+    draw();
+  }
+
   // Keep Railway awake — ping every 5 minutes
   setInterval(() => fetch(`${API_BASE}/ping`).catch(() => {}), 5 * 60 * 1000);
 
   renderPairs(pairs);
+  initChart();
 </script>
 </body>
 </html>
